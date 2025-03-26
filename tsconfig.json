@@ -26,11 +26,6 @@
     "resolveJsonModule": true,
     "importHelpers": true,
     "baseUrl": "./src",
-    "paths": {
-      "@controllers/*": [
-        "controllers/*"
-      ]
-    },
     "skipLibCheck": true
   },
   "include": [

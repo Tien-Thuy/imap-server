@@ -10,8 +10,9 @@
   },
   "main": "./dist/index",
   "scripts": {
-    "dev": "npm link && nodemon",
+    "dev": "nodemon",
     "build": "tsc && npx tsc-alias",
+    "test": "tsc src/example.ts",
     "upgrade": "npm install -g npm-check-updates && ncu -u && npm install"
   },
   "dependencies": {
