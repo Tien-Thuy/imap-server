@@ -33,6 +33,7 @@ export default class IMAPServer extends EventEmitter {
         },
         idleTimeout: 180000,
         maxConnections: 0,
+        idLength: 22
       },
       ...config
     };
@@ -60,7 +61,6 @@ export default class IMAPServer extends EventEmitter {
 
     this.server.on('connection', this.handleConnection.bind(this));
     this.server.on('error', this.handleError.bind(this));
-
     await new Promise<void>((resolve) => {
       this.server!.listen(this.config.port, this.config.host, () => {
         this.running = true;
@@ -72,7 +72,6 @@ export default class IMAPServer extends EventEmitter {
         resolve();
       });
     });
-
     console.log(`IMAP is started at ${this.config.host}:${this.config.port} (${this.config.TLSOptions.enable ? 'secure' : 'standard'})`);
   }
 
@@ -90,7 +89,7 @@ export default class IMAPServer extends EventEmitter {
           reject(err);
         } else {
           this.running = false;
-          this.emit('closed');
+          this.emit('close');
           resolve();
         }
       });
@@ -116,12 +115,13 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    const connectionId: string = randomString.generate(22);
+    const connectionId: string = randomString.generate(this.config.idLength);
     const connection: IMAPConnection = {
       id: connectionId,
       socket,
       state: 'not_authenticated',
-      secure: this.config.TLSOptions.enable || socket instanceof tls.TLSSocket
+      secure: this.config.TLSOptions.enable || socket instanceof tls.TLSSocket,
+      mailbox: []
     };
     this.connections.set(connectionId, connection);
     socket.on('close', () => this.handleOnClose(connection));
@@ -132,8 +132,8 @@ export default class IMAPServer extends EventEmitter {
       socket.setTimeout(this.config.idleTimeout);
     }
 
-    this.commandNoop(connection, `* OK ${this.config.welcomeMessage}`);
-    this.emit('connection', {
+    this.sendCommand(connection, `* OK ${this.config.welcomeMessage}`);
+    this.emit('connect', {
       id: connectionId,
       remoteAddress: socket.remoteAddress,
       secure: connection.secure
@@ -146,22 +146,26 @@ export default class IMAPServer extends EventEmitter {
   }
 
   private handleOnClose(connection: IMAPConnection) {
-
+    this.emit('close')
   }
 
   private handleOnTimeout(connection: IMAPConnection) {
-
+    this.emit('timeout', connection);
   }
 
   private handleOnError(connection: IMAPConnection, error: any) {
-
+    this.emit('error', error);
   }
 
   private handleOnData(connection: IMAPConnection, data: Buffer): void {
+    this.emit('data', {
+      connection,
+      data
+    });
     const commands: string[] = data.toString('utf8').trim().split(' ');
     if (commands.length < 2) {
       console.log(commands);
-      this.commandNoop(connection, '* BAD Malformed command');
+      this.sendCommand(connection, '* BAD Malformed command');
       return;
     }
     const tag: string = commands[0];
@@ -185,22 +189,21 @@ export default class IMAPServer extends EventEmitter {
         this.commandList(connection, tag, args);
         break;
       case 'NOOP':
-        this.commandNoop(connection, `${tag} OK NOOP completed`);
+        this.sendCommand(connection, `${tag} OK NOOP completed`);
         break;
       case 'STARTTLS':
         this.commandStartTLS(connection, tag);
         break;
       default:
-        this.commandNoop(connection, `${tag} BAD Command not recognized or not implemented`);
+        this.sendCommand(connection, `${tag} BAD Command not recognized or not implemented`);
         break;
     }
   }
 
-  private commandNoop(connection: IMAPConnection, response: string): void {
+  private sendCommand(connection: IMAPConnection, response: string): void {
     try {
       if (connection.socket.writable) {
         connection.socket.write(response + '\r\n');
-        // Log phản hồi (cần lọc thông tin nhạy cảm trước khi log)
         console.log(`[${connection.id}] S: ${response}`);
       }
     } catch (error) {
@@ -216,110 +219,102 @@ export default class IMAPServer extends EventEmitter {
       'AUTH=PLAIN',
       'AUTH=LOGIN'
     ];
-    if (!connection.secure) {    // Thêm STARTTLS nếu server không bảo mật
+    if (!connection.secure) {
       capabilities.push('STARTTLS');
     }
 
-    this.commandNoop(connection, `* CAPABILITY ${capabilities.join(' ')}`);
-    this.commandNoop(connection, `${tag} OK CAPABILITY completed`);
+    this.emit('CAPABILITY', connection, tag);
+    this.sendCommand(connection, `* CAPABILITY ${capabilities.join(' ')}`);
+    this.sendCommand(connection, `${tag} OK CAPABILITY completed`);
   }
 
-  /**
-   * Xử lý lệnh LOGIN
-   */
   private commandLogin(connection: IMAPConnection, tag: string, args: string[]): void {
     if (connection.state !== 'not_authenticated') {
-      this.commandNoop(connection, `${tag} BAD Command not valid in current state`);
+      this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
     if (args.length < 2) {
-      this.commandNoop(connection, `${tag} BAD Missing required arguments`);
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
       return;
     }
 
-    const username = args[0].replace(/"/g, '');
-    this.emit('login', {
+    const username: string = args[0].replace(/"/g, '');
+    this.emit('LOGIN', {
       connection,
       username: username,
       password: args[1].replace(/"/g, ''),
-      success: false,
       auth: (success: boolean) => {
         if (success) {
           connection.state = 'authenticated';
           connection.user = username;
-          this.commandNoop(connection, `${tag} OK LOGIN completed`);
+          this.sendCommand(connection, `${tag} OK LOGIN completed`);
         } else {
-          this.commandNoop(connection, `${tag} NO LOGIN failed`);
+          this.sendCommand(connection, `${tag} NO LOGIN failed`);
         }
       }
-    });
+    }, tag);
     if (!this.listenerCount('login')) {
-      this.commandNoop(connection, `${tag} NO LOGIN failed`);
+      this.sendCommand(connection, `${tag} NO LOGIN failed`);
     }
-
   }
 
   private commandLogout(connection: IMAPConnection, tag: string): void {
-    this.commandNoop(connection, '* BYE IMAP server logging out');
-    this.commandNoop(connection, `${tag} OK LOGOUT completed`);
-// TODO: Callback to auth
+    this.sendCommand(connection, '* BYE IMAP server logging out');
+    this.sendCommand(connection, `${tag} OK LOGOUT completed`);
+    this.emit('LOGOUT', connection, tag);
     connection.state = 'logout';
     this.closeConnection(connection, 'Client logout');
   }
 
   private commandSelect(connection: IMAPConnection, tag: string, args: string[]): void {
-    // Kiểm tra trạng thái kết nối
     if (connection.state !== 'authenticated' && connection.state !== 'selected') {
-      this.commandNoop(connection, `${tag} BAD Command not valid in current state`);
+      this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
-
-    // Kiểm tra tham số
     if (args.length < 1) {
-      this.commandNoop(connection, `${tag} BAD Missing required arguments`);
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
       return;
     }
 
     const mailboxName = args[0].replace(/"/g, '');
-
-    // Ở đây bạn sẽ thêm logic để chọn hộp thư
-    // Ví dụ này giả định thành công
     connection.state = 'selected';
     connection.selectedMailbox = mailboxName;
-
-    // Gửi trạng thái hộp thư
-    this.commandNoop(connection, `* 0 EXISTS`);
-    this.commandNoop(connection, `* 0 RECENT`);
-    this.commandNoop(connection, `* OK [UNSEEN 0] No unseen messages`);
-    this.commandNoop(connection, `* OK [UIDVALIDITY 1] UIDs valid`);
-    this.commandNoop(connection, `* OK [UIDNEXT 1] Predicted next UID`);
-    this.commandNoop(connection, `* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)`);
-    this.commandNoop(connection, `* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)] Permanent flags`);
-    this.commandNoop(connection, `${tag} OK [READ-WRITE] SELECT completed`);
+    this.emit('SELECT', connection, (exits: boolean, flags: string[]) => {
+      if (exits) {
+        const mailbox: string = flags.map((flag) => `\\${flag}`).join(' ')
+        this.sendCommand(connection, `* 0 EXISTS`);
+        this.sendCommand(connection, `* 0 RECENT`);
+        this.sendCommand(connection, `* OK [UNSEEN 0] No unseen messages`);
+        this.sendCommand(connection, `* OK [UIDVALIDITY 1] UIDs valid`);
+        this.sendCommand(connection, `* OK [UIDNEXT 1] Predicted next UID`);
+        this.sendCommand(connection, `* FLAGS (${mailbox})`);
+        this.sendCommand(connection, `* OK [PERMANENTFLAGS (${mailbox}})] Permanent flags`);
+        this.sendCommand(connection, `${tag} OK [READ-WRITE] SELECT completed`);
+      } else {
+        this.sendCommand(connection, `${tag} NO Mailbox doesn't exist (Failure)`);
+      }
+    }, tag)
   }
 
   /**
    * Xử lý lệnh LIST
    */
   private commandList(connection: IMAPConnection, tag: string, args: string[]): void {
-    // Kiểm tra trạng thái kết nối
     if (connection.state !== 'authenticated' && connection.state !== 'selected') {
-      this.commandNoop(connection, `${tag} BAD Command not valid in current state`);
+      this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
-    // Kiểm tra tham số
     if (args.length < 2) {
-      this.commandNoop(connection, `${tag} BAD Missing required arguments`);
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
       return;
     }
 
-    // TODO: callback to show list mailbox
-    this.commandNoop(connection, '* LIST (\\HasNoChildren) "." "INBOX"');
-    this.commandNoop(connection, '* LIST (\\HasNoChildren) "." "Sent"');
-    this.commandNoop(connection, '* LIST (\\HasNoChildren) "." "Drafts"');
-    this.commandNoop(connection, '* LIST (\\HasNoChildren) "." "Trash"');
-    this.commandNoop(connection, '* LIST (\\HasNoChildren) "." "Junk"');
-    this.commandNoop(connection, `${tag} OK LIST completed`);
+    this.emit('LIST', connection, (mailboxes) => {
+      for (const mailbox of mailboxes) {
+        this.sendCommand(connection, `* LIST (\\${mailbox.child ? 'HasChildren' : 'NoChildren'}) "." "${mailbox.name}"`);
+      }
+      this.sendCommand(connection, `${tag} OK LIST completed`);
+    }, tag)
   }
 
   /**
@@ -328,27 +323,20 @@ export default class IMAPServer extends EventEmitter {
   private commandStartTLS(connection: IMAPConnection, tag: string): void {
     // Kiểm tra nếu đã là kết nối bảo mật
     if (connection.secure) {
-      this.commandNoop(connection, `${tag} BAD Connection already secure`);
+      this.sendCommand(connection, `${tag} BAD Connection already secure`);
       return;
     }
-
-    // Kiểm tra nếu không có cấu hình TLS
     if (!this.config.TLSOptions.enable || !this.config.TLSOptions.key || !this.config.TLSOptions.cert) {
-      this.commandNoop(connection, `${tag} NO STARTTLS not available`);
+      this.sendCommand(connection, `${tag} NO STARTTLS not available`);
       return;
     }
 
-    this.commandNoop(connection, `${tag} OK Begin TLS negotiation now`);
-
-    // Nâng cấp kết nối lên TLS
+    this.sendCommand(connection, `${tag} OK Begin TLS negotiation now`);
     const socket = connection.socket as net.Socket;
     const secureContext = tls.createSecureContext(this.config.TLSOptions);
-
-    // Lưu socket ID và state trước khi nâng cấp
     const connectionId = connection.id;
     const state = connection.state;
     const user = connection.user;
-
     try {
       const secureSocket = new tls.TLSSocket(socket, {
         secureContext,
@@ -361,7 +349,8 @@ export default class IMAPServer extends EventEmitter {
         socket: secureSocket,
         state,
         user,
-        secure: true
+        secure: true,
+        mailbox: []
       };
       this.connections.set(connectionId, secureConnection);
       secureSocket.on('close', () => this.handleOnClose(connection));

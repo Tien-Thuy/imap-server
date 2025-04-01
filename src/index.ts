@@ -9,9 +9,40 @@ const imapServer = new IMAPServer({
   }
 });
 
-imapServer.on('login', (event) => {
-  console.log(event)
+imapServer.on('connect', (event) => {
+
+});
+
+imapServer.on('close', () => {
+
+});
+imapServer.on('data', (event) => {
+
+});
+imapServer.on('error', (event) => {
+
+});
+imapServer.on('listening', (event) => {
+
+});
+
+imapServer.on('LOGIN', (event, tag) => {
   event.auth(true)
 });
+
+imapServer.on('LOGOUT', (event) => {
+});
+
+imapServer.on('SELECT', (event, callback, tag) => {
+
+});
+
+imapServer.on('CAPABILITY', (event, tag) => {
+
+});
+
+imapServer.on('LIST', (connection, callback, tag) => {
+
+})
 
 imapServer.start().catch(console.error);
