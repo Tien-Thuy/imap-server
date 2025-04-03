@@ -1,6 +1,5 @@
 import net from "node:net";
 import tls from "node:tls";
-import * as console from "node:console";
 
 export interface IMAPServerEvents {
   connect: (event: {
@@ -51,14 +50,24 @@ export interface IMAPServerConfig {
   idleTimeout?: number;
   maxConnections?: number;
   idLength?: number;
+  storage?: IStorage;
+}
+
+export interface IStorage {
+  get: (key: string) => Promise<IConnectInfo | undefined>;
+  set: (key: string, value: IConnectInfo) => Promise<void>;
+  destroy: (key: string) => Promise<void>;
+  list: () => Promise<Map<string, IConnectInfo>>;
+}
+
+export interface IConnectInfo {
+  state: 'not_authenticated' | 'authenticated' | 'selected' | 'logout';
+  user?: string;
+  selectedMailbox?: string;
+  secure: boolean;
 }
 
 export interface IMAPConnection {
   id: string;
   socket: net.Socket | tls.TLSSocket;
-  state: 'not_authenticated' | 'authenticated' | 'selected' | 'logout';
-  user?: string;
-  selectedMailbox?: string;
-  secure: boolean;
-  mailbox: string[]
 }

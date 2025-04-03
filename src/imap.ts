@@ -3,13 +3,14 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 import * as randomString from "randomstring";
 import {Buffer} from 'node:buffer';
-import {IMAPConnection, IMAPServerConfig, IMAPServerEvents} from "./interface";
+import { IMAPConnection, IMAPServerConfig, IMAPServerEvents, IStorage } from "./interface";
+import Storage from "./storage";
 
 export default class IMAPServer extends EventEmitter {
   private readonly config: IMAPServerConfig;
-  private connections: Map<string, IMAPConnection>;
   private running: boolean;
   private server?: net.Server | tls.Server;
+  private storage: IStorage;
 
   public on<E extends keyof IMAPServerEvents>(event: E, listener: IMAPServerEvents[E]): this {
     return super.on(event, listener as any);
@@ -25,6 +26,16 @@ export default class IMAPServer extends EventEmitter {
 
   constructor(config: IMAPServerConfig) {
     super();
+    if (!config.storage) {
+      const storage = new Storage();
+      config.storage = {
+        get: storage.get,
+        set: storage.set,
+        destroy: storage.destroy,
+        list: storage.list
+      }
+    }
+
     this.config = {
       ...{
         welcomeMessage: 'Welcome to Tien Thuy IMAP Server',
@@ -37,7 +48,7 @@ export default class IMAPServer extends EventEmitter {
       },
       ...config
     };
-    this.connections = new Map();
+    this.storage = this.config.storage;
     this.running = false;
   }
 
@@ -80,7 +91,7 @@ export default class IMAPServer extends EventEmitter {
       throw new Error('IMAP server is not started.');
     }
 
-    Array.from(this.connections.values()).forEach(connection => {
+    Array.from((await this.storage.list()).values()).forEach(connection => {
       this.closeConnection(connection);
     });
     await new Promise<void>((resolve, reject) => {
@@ -96,7 +107,7 @@ export default class IMAPServer extends EventEmitter {
     });
   }
 
-  public closeConnection(connection: IMAPConnection, reason: string = 'Server shutdown') {
+  public async closeConnection(connection: IMAPConnection, reason: string = 'Server shutdown') {
     try {
       if (!connection.socket.destroyed) {
         connection.socket.end();
@@ -104,26 +115,27 @@ export default class IMAPServer extends EventEmitter {
     } catch (error) {
       console.error(`Error closing connection ${connection.id}:`, error);
     } finally {
-      this.connections.delete(connection.id);
+      await this.storage.destroy(connection.id);
     }
   }
 
-  private handleConnection(socket: net.Socket | tls.TLSSocket): void {
-    if (this.config.maxConnections !== 0 && this.connections.size >= this.config.maxConnections) {
+  private async handleConnection(socket: net.Socket | tls.TLSSocket): Promise<void> {
+    if (this.config.maxConnections !== 0 && (await this.storage.list()).size >= this.config.maxConnections) {
       socket.end('* NO Too many connections\r\n');
       socket.destroy();
       return;
     }
 
-    const connectionId: string = randomString.generate(this.config.idLength);
+    const id: string = randomString.generate(this.config.idLength);
+    const secure = this.config.TLSOptions.enable || socket instanceof tls.TLSSocket;
     const connection: IMAPConnection = {
-      id: connectionId,
-      socket,
-      state: 'not_authenticated',
-      secure: this.config.TLSOptions.enable || socket instanceof tls.TLSSocket,
-      mailbox: []
+      id,
+      socket
     };
-    this.connections.set(connectionId, connection);
+    await this.storage.set(id, {
+      state: 'not_authenticated',
+      secure
+    });
     socket.on('close', () => this.handleOnClose(connection));
     socket.on('timeout', () => this.handleOnTimeout(connection));
     socket.on('error', (error) => this.handleOnError(connection, error));
@@ -134,9 +146,9 @@ export default class IMAPServer extends EventEmitter {
 
     this.sendCommand(connection, `* OK ${this.config.welcomeMessage}`);
     this.emit('connect', {
-      id: connectionId,
+      id: id,
       remoteAddress: socket.remoteAddress,
-      secure: connection.secure
+      secure
     });
   }
 
@@ -157,7 +169,7 @@ export default class IMAPServer extends EventEmitter {
     this.emit('error', error);
   }
 
-  private handleOnData(connection: IMAPConnection, data: Buffer): void {
+  private async handleOnData(connection: IMAPConnection, data: Buffer): Promise<void> {
     this.emit('data', {
       connection,
       data
@@ -168,6 +180,13 @@ export default class IMAPServer extends EventEmitter {
       this.sendCommand(connection, '* BAD Malformed command');
       return;
     }
+
+    const connectInfo = await this.storage.get(connection.id);
+    if (!connectInfo) {
+      this.sendCommand(connection, '* BAD Connection not found');
+      return;
+    }
+
     const tag: string = commands[0];
     const command: string = commands[1].toUpperCase();
     const args: string[] = commands.slice(2);
@@ -180,27 +199,105 @@ export default class IMAPServer extends EventEmitter {
         this.commandLogin(connection, tag, args);
         break;
       case 'LOGOUT':
-        this.commandLogout(connection, tag);
-        break;
       case 'SELECT':
-        this.commandSelect(connection, tag, args);
-        break;
       case 'LIST':
-        this.commandList(connection, tag, args);
-        break;
       case 'NOOP':
-        this.sendCommand(connection, `${tag} OK NOOP completed`);
-        break;
       case 'STARTTLS':
-        this.commandStartTLS(connection, tag);
+      case 'CREATE':
+      case 'EXAMINE':
+      case 'DELETE':
+      case 'RENAME':
+      case 'SUBSCRIBE':
+      case 'UNSUBSCRIBE':
+      case 'STATUS':
+      case 'APPEND':
+      case 'CHECK':
+      case 'CLOSE':
+      case 'EXPUNGE':
+      case 'SEARCH':
+      case 'FETCH':
+      case 'STORE':
+      case 'COPY':
+      case 'MOVE': {
+        if (connectInfo.state !== 'authenticated' && connectInfo.state !== 'selected') {
+          this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
+          return;
+        }
+
+        switch (command) {
+          case 'LOGOUT':
+            this.commandLogout(connection, tag);
+            break;
+          case 'SELECT':
+            this.commandSelect(connection, tag, args);
+            break;
+          case 'LIST':
+            this.commandList(connection, tag, args);
+            break;
+          case 'NOOP':
+            this.sendCommand(connection, `${tag} OK NOOP completed`);
+            break;
+          case 'STARTTLS':
+            this.commandStartTLS(connection, tag);
+            break;
+          case 'CREATE':
+            this.commandCreate(connection, tag, args);
+            break;
+          case 'EXAMINE':
+            this.commandExamine(connection, tag, args);
+            break;
+          case 'DELETE':
+            this.commandDelete(connection, tag, args);
+            break;
+          case 'RENAME':
+            this.commandRename(connection, tag, args);
+            break;
+          case 'SUBSCRIBE':
+            this.commandSubscribe(connection, tag, args);
+            break;
+          case 'UNSUBSCRIBE':
+            this.commandUnsubscrube(connection, tag, args);
+            break;
+          case 'STATUS':
+            this.commandStatus(connection, tag, args);
+            break;
+          case 'APPEND':
+            this.commandAppend(connection, tag, args);
+            break;
+          case 'CHECK':
+            this.commandCheck(connection, tag, args);
+            break;
+          case 'CLOSE':
+            this.commandClose(connection, tag, args);
+            break;
+          case 'EXPUNGE':
+            this.commandExpunge(connection, tag, args);
+            break;
+          case 'SEARCH':
+            this.commandSearch(connection, tag, args);
+            break;
+          case 'FETCH':
+            this.commandFetch(connection, tag, args);
+            break;
+          case 'STORE':
+            this.commandStore(connection, tag, args);
+            break;
+          case 'COPY':
+            this.commandCopy(connection, tag, args);
+            break;
+          case 'MOVE':
+            this.commandMove(connection, tag, args);
+            break;
+        }
         break;
+      }
       default:
         this.sendCommand(connection, `${tag} BAD Command not recognized or not implemented`);
         break;
     }
   }
 
-  private sendCommand(connection: IMAPConnection, response: string): void {
+  private async sendCommand(connection: IMAPConnection, response: string): Promise<void> {
     try {
       if (connection.socket.writable) {
         connection.socket.write(response + '\r\n');
@@ -208,7 +305,7 @@ export default class IMAPServer extends EventEmitter {
       }
     } catch (error) {
       console.error(`Error sending response to ${connection.id}:`, error);
-      this.closeConnection(connection, 'Failed to send response');
+      await this.closeConnection(connection, 'Failed to send response');
     }
   }
 
@@ -320,7 +417,7 @@ export default class IMAPServer extends EventEmitter {
   /**
    * Xử lý lệnh STARTTLS
    */
-  private commandStartTLS(connection: IMAPConnection, tag: string): void {
+  private async commandStartTLS(connection: IMAPConnection, tag: string): Promise<void> {
     // Kiểm tra nếu đã là kết nối bảo mật
     if (connection.secure) {
       this.sendCommand(connection, `${tag} BAD Connection already secure`);
@@ -343,7 +440,7 @@ export default class IMAPServer extends EventEmitter {
         isServer: true,
         rejectUnauthorized: false
       });
-      this.connections.delete(connectionId);
+      await this.storage.destroy(connectionId);
       const secureConnection: IMAPConnection = {
         id: connectionId,
         socket: secureSocket,
@@ -352,7 +449,7 @@ export default class IMAPServer extends EventEmitter {
         secure: true,
         mailbox: []
       };
-      this.connections.set(connectionId, secureConnection);
+      await this.storage.set(connectionId, secureConnection);
       secureSocket.on('close', () => this.handleOnClose(connection));
       secureSocket.on('timeout', () => this.handleOnTimeout(connection));
       secureSocket.on('error', (error) => this.handleOnError(connection, error));
@@ -360,6 +457,13 @@ export default class IMAPServer extends EventEmitter {
     } catch (error) {
       console.error('Lỗi nâng cấp kết nối TLS:', error);
       this.closeConnection(connection, 'TLS upgrade failed');
+    }
+  }
+
+  private commandCreate(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
     }
   }
 }
