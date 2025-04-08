@@ -11,6 +11,7 @@ export default class IMAPServer extends EventEmitter {
   private running: boolean;
   private server?: net.Server | tls.Server;
   private storage: IStorage;
+  private connected: IMAPConnection[];
 
   public on<E extends keyof IMAPServerEvents>(event: E, listener: IMAPServerEvents[E]): this {
     return super.on(event, listener as any);
@@ -50,6 +51,7 @@ export default class IMAPServer extends EventEmitter {
     };
     this.storage = this.config.storage;
     this.running = false;
+    this.connected = [];
   }
 
   public async start() {
@@ -91,7 +93,7 @@ export default class IMAPServer extends EventEmitter {
       throw new Error('IMAP server is not started.');
     }
 
-    Array.from((await this.storage.list()).values()).forEach(connection => {
+    this.connected.forEach(connection => {
       this.closeConnection(connection);
     });
     await new Promise<void>((resolve, reject) => {
@@ -144,6 +146,7 @@ export default class IMAPServer extends EventEmitter {
       socket.setTimeout(this.config.idleTimeout);
     }
 
+    this.connected.push(connection);
     this.sendCommand(connection, `* OK ${this.config.welcomeMessage}`);
     this.emit('connect', {
       id: id,
@@ -309,14 +312,15 @@ export default class IMAPServer extends EventEmitter {
     }
   }
 
-  private commandCapability(connection: IMAPConnection, tag: string): void {
+  private async commandCapability(connection: IMAPConnection, tag: string): Promise<void> {
+    const _connection = await this.storage.get(connection.id);
     const capabilities = [
       'IMAP4rev1',
       'IMAP4',
       'AUTH=PLAIN',
       'AUTH=LOGIN'
     ];
-    if (!connection.secure) {
+    if (!_connection.secure) {
       capabilities.push('STARTTLS');
     }
 
@@ -325,8 +329,9 @@ export default class IMAPServer extends EventEmitter {
     this.sendCommand(connection, `${tag} OK CAPABILITY completed`);
   }
 
-  private commandLogin(connection: IMAPConnection, tag: string, args: string[]): void {
-    if (connection.state !== 'not_authenticated') {
+  private async commandLogin(connection: IMAPConnection, tag: string, args: string[]): Promise<void> {
+    const _connection = await this.storage.get(connection.id);
+    if (_connection.state !== 'not_authenticated') {
       this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
@@ -342,8 +347,8 @@ export default class IMAPServer extends EventEmitter {
       password: args[1].replace(/"/g, ''),
       auth: (success: boolean) => {
         if (success) {
-          connection.state = 'authenticated';
-          connection.user = username;
+          _connection.state = 'authenticated';
+          _connection.user = username;
           this.sendCommand(connection, `${tag} OK LOGIN completed`);
         } else {
           this.sendCommand(connection, `${tag} NO LOGIN failed`);
@@ -355,16 +360,18 @@ export default class IMAPServer extends EventEmitter {
     }
   }
 
-  private commandLogout(connection: IMAPConnection, tag: string): void {
+  private async commandLogout(connection: IMAPConnection, tag: string): Promise<void> {
+    const _connection = await this.storage.get(connection.id);
     this.sendCommand(connection, '* BYE IMAP server logging out');
     this.sendCommand(connection, `${tag} OK LOGOUT completed`);
     this.emit('LOGOUT', connection, tag);
-    connection.state = 'logout';
+    _connection.state = 'logout';
     this.closeConnection(connection, 'Client logout');
   }
 
-  private commandSelect(connection: IMAPConnection, tag: string, args: string[]): void {
-    if (connection.state !== 'authenticated' && connection.state !== 'selected') {
+  private async commandSelect(connection: IMAPConnection, tag: string, args: string[]): Promise<void> {
+    const _connection = await this.storage.get(connection.id);
+    if (_connection.state !== 'authenticated' && _connection.state !== 'selected') {
       this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
@@ -374,8 +381,8 @@ export default class IMAPServer extends EventEmitter {
     }
 
     const mailboxName = args[0].replace(/"/g, '');
-    connection.state = 'selected';
-    connection.selectedMailbox = mailboxName;
+    _connection.state = 'selected';
+    _connection.selectedMailbox = mailboxName;
     this.emit('SELECT', connection, (exits: boolean, flags: string[]) => {
       if (exits) {
         const mailbox: string = flags.map((flag) => `\\${flag}`).join(' ')
@@ -396,8 +403,9 @@ export default class IMAPServer extends EventEmitter {
   /**
    * Xử lý lệnh LIST
    */
-  private commandList(connection: IMAPConnection, tag: string, args: string[]): void {
-    if (connection.state !== 'authenticated' && connection.state !== 'selected') {
+  private async commandList(connection: IMAPConnection, tag: string, args: string[]): Promise<void> {
+    const _connection = await this.storage.get(connection.id);
+    if (_connection.state !== 'authenticated' && _connection.state !== 'selected') {
       this.sendCommand(connection, `${tag} BAD Command not valid in current state`);
       return;
     }
@@ -418,8 +426,8 @@ export default class IMAPServer extends EventEmitter {
    * Xử lý lệnh STARTTLS
    */
   private async commandStartTLS(connection: IMAPConnection, tag: string): Promise<void> {
-    // Kiểm tra nếu đã là kết nối bảo mật
-    if (connection.secure) {
+    const _connection = await this.storage.get(connection.id);
+    if (_connection.secure) {
       this.sendCommand(connection, `${tag} BAD Connection already secure`);
       return;
     }
@@ -432,8 +440,6 @@ export default class IMAPServer extends EventEmitter {
     const socket = connection.socket as net.Socket;
     const secureContext = tls.createSecureContext(this.config.TLSOptions);
     const connectionId = connection.id;
-    const state = connection.state;
-    const user = connection.user;
     try {
       const secureSocket = new tls.TLSSocket(socket, {
         secureContext,
@@ -441,15 +447,11 @@ export default class IMAPServer extends EventEmitter {
         rejectUnauthorized: false
       });
       await this.storage.destroy(connectionId);
-      const secureConnection: IMAPConnection = {
-        id: connectionId,
-        socket: secureSocket,
-        state,
-        user,
-        secure: true,
-        mailbox: []
-      };
-      await this.storage.set(connectionId, secureConnection);
+      await this.storage.set(connectionId, {
+        state: _connection.state,
+        user: _connection.user,
+        secure: true
+      });
       secureSocket.on('close', () => this.handleOnClose(connection));
       secureSocket.on('timeout', () => this.handleOnTimeout(connection));
       secureSocket.on('error', (error) => this.handleOnError(connection, error));
@@ -465,5 +467,142 @@ export default class IMAPServer extends EventEmitter {
       this.sendCommand(connection, `${tag} BAD Missing required arguments`);
       return;
     }
+
+    this.emit('CREATE', args);
+  }
+
+  private commandExamine(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('EXAMINE', args);
+  }
+
+  private commandDelete(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('DELETE', args);
+  }
+
+  private commandRename(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('RENAME', args);
+  }
+
+  private commandSubscribe(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('SUBSCRIBE', args);
+  }
+
+  private commandUnsubscrube(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('UNSUBSCRIBE', args);
+  }
+
+  private commandStatus(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('STATUS', args);
+  }
+
+  private commandAppend(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('APPEND', args);
+  }
+
+  private commandCheck(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('CHECK', args);
+  }
+
+  private commandClose(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('CLOSE', args);
+  }
+
+  private commandExpunge(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('EXPUNGE', args);
+  }
+
+  private commandSearch(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('SEARCH', args);
+  }
+
+  private commandFetch(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('FETCH', args);
+  }
+
+  private commandStore(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('STORE', args);
+  }
+
+  private commandCopy(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('COPY', args);
+  }
+
+  private commandMove(connection: IMAPConnection, tag: string, args: string[]): void {
+    if (args.length < 1) {
+      this.sendCommand(connection, `${tag} BAD Missing required arguments`);
+      return;
+    }
+
+    this.emit('MOVE', args);
   }
 }

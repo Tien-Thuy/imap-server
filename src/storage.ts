@@ -1,7 +1,7 @@
-import { IMAPConnection } from "./interface";
+import { IConnectInfo, IMAPConnection } from "./interface";
 
 export default class Storage {
-  private connection: Map<string, IMAPConnection>
+  private connection: Map<string, IConnectInfo>
 
   constructor() {
     this.connection = new Map();
@@ -11,7 +11,7 @@ export default class Storage {
     return this.connection.get(key);
   }
 
-  async set(key: string, connection: IMAPConnection) {
+  async set(key: string, connection: IConnectInfo) {
     this.connection.set(key, connection);
   }
 

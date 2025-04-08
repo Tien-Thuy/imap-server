@@ -34,6 +34,22 @@ export interface IMAPServerEvents {
   }[]) => void, tag: string) => void;
   'connection:close': (connection: IMAPConnection) => void;
   command: (event: { connection: IMAPConnection, command: string, args: string[] }) => void;
+  CREATE: (connection: IMAPConnection, tag: string) => void;
+  EXAMINE: (connection: IMAPConnection, tag: string) => void;
+  DELETE: (connection: IMAPConnection, tag: string) => void;
+  RENAME: (connection: IMAPConnection, tag: string) => void;
+  SUBSCRIBE: (connection: IMAPConnection, tag: string) => void;
+  UNSUBSCRIBE: (connection: IMAPConnection, tag: string) => void;
+  STATUS: (connection: IMAPConnection, tag: string) => void;
+  APPEND: (connection: IMAPConnection, tag: string) => void;
+  CHECK: (connection: IMAPConnection, tag: string) => void;
+  CLOSE: (connection: IMAPConnection, tag: string) => void;
+  EXPUNGE: (connection: IMAPConnection, tag: string) => void;
+  SEARCH: (connection: IMAPConnection, tag: string) => void;
+  FETCH: (connection: IMAPConnection, tag: string) => void;
+  STORE: (connection: IMAPConnection, tag: string) => void;
+  COPY: (connection: IMAPConnection, tag: string) => void;
+  MOVE: (connection: IMAPConnection, tag: string) => void;
 }
 
 export interface IMAPServerConfig {
