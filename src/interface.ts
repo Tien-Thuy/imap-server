@@ -56,7 +56,6 @@ export interface IMAPServerConfig {
   host: string;
   port: number;
   welcomeMessage?: string;
-  state?: 'not_authenticated' | 'authenticated' | 'selected' | 'logout';
   TLSOptions: {
     enable: boolean;
     key?: string;

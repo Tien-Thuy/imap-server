@@ -468,7 +468,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('CREATE', args);
+    this.emit('CREATE', connection, tag);
   }
 
   private commandExamine(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -477,7 +477,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('EXAMINE', args);
+    this.emit('EXAMINE', connection, tag);
   }
 
   private commandDelete(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -486,7 +486,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('DELETE', args);
+    this.emit('DELETE', connection, tag);
   }
 
   private commandRename(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -495,7 +495,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('RENAME', args);
+    this.emit('RENAME', connection, tag);
   }
 
   private commandSubscribe(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -504,7 +504,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('SUBSCRIBE', args);
+    this.emit('SUBSCRIBE', connection, tag);
   }
 
   private commandUnsubscrube(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -513,7 +513,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('UNSUBSCRIBE', args);
+    this.emit('UNSUBSCRIBE', connection, tag);
   }
 
   private commandStatus(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -522,7 +522,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('STATUS', args);
+    this.emit('STATUS', connection, tag);
   }
 
   private commandAppend(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -531,7 +531,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('APPEND', args);
+    this.emit('APPEND', connection, tag);
   }
 
   private commandCheck(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -540,7 +540,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('CHECK', args);
+    this.emit('CHECK', connection, tag);
   }
 
   private commandClose(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -549,7 +549,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('CLOSE', args);
+    this.emit('CLOSE', connection, tag);
   }
 
   private commandExpunge(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -558,7 +558,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('EXPUNGE', args);
+    this.emit('EXPUNGE', connection, tag);
   }
 
   private commandSearch(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -567,7 +567,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('SEARCH', args);
+    this.emit('SEARCH', connection, tag);
   }
 
   private commandFetch(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -576,7 +576,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('FETCH', args);
+    this.emit('FETCH', connection, tag);
   }
 
   private commandStore(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -585,7 +585,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('STORE', args);
+    this.emit('STORE', connection, tag);
   }
 
   private commandCopy(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -594,7 +594,7 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('COPY', args);
+    this.emit('COPY', connection, tag);
   }
 
   private commandMove(connection: IMAPConnection, tag: string, args: string[]): void {
@@ -603,6 +603,6 @@ export default class IMAPServer extends EventEmitter {
       return;
     }
 
-    this.emit('MOVE', args);
+    this.emit('MOVE', connection, tag);
   }
 }
