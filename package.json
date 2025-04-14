@@ -1,6 +1,6 @@
 {
   "name": "@tien-thuy/imap-server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "IMAP server",
   "author": "Huong Da Group",
   "license": "ISC",
