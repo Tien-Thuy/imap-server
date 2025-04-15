@@ -1,6 +1,6 @@
 {
   "name": "@tien-thuy/imap-server",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "IMAP server",
   "author": "Huong Da Group",
   "license": "ISC",
@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/Tien-Thuy/imap-server.git"
   },
-  "main": "./dist/index",
+  "main": "./dist/imap.js",
   "scripts": {
     "dev": "nodemon",
     "build": "tsc && npx tsc-alias",
@@ -21,15 +21,15 @@
     "tslib": "~2.8.1"
   },
   "devDependencies": {
-    "@types/node": "^22.13.9",
+    "@types/node": "^22.14.1",
     "@types/randomstring": "^1.3.0",
-    "lint-staged": "~15.4.3",
+    "lint-staged": "~15.5.1",
     "node-config": "~0.0.2",
-    "node-gyp": "~11.1.0",
+    "node-gyp": "~11.2.0",
     "nodemon": "^3.1.9",
     "ts-node": "~10.9.2",
-    "tsc-alias": "~1.8.11",
+    "tsc-alias": "~1.8.15",
     "tsconfig-paths": "~4.2.0",
-    "typescript": "~5.8.2"
+    "typescript": "~5.8.3"
   }
 }

@@ -1,0 +1,7 @@
+.github/
+package-lock.json
+src/
+tsconfig.json/
+nodemon.json/
+node_modules/
+.npmrc
