@@ -88,3 +88,6 @@ const imapServer = new IMAPServer({
 | `STORE`            | `connection: IMAPConnection, tag: string`                                                                                   | Emitted when a store command is received.                                        |
 | `COPY`             | `connection: IMAPConnection, tag: string`                                                                                   | Emitted when a copy command is received.                                         |
 | `MOVE`             | `connection: IMAPConnection, tag: string`                                                                                   | Emitted when a move command is received.                                         |
+
+
+<!-- Security scan triggered at 2025-09-02 05:38:35 -->
